@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openpkpd"
-version = "0.1.0"
-description = "Small deterministic pharmacokinetic and pharmacodynamic modeling toolkit with an MCP server"
+version = "1.0.0"
+description = "Deterministic pharmacokinetic modeling, estimation and diagnostics with a local MCP interface"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
 authors = [{name = "OpenPKPD contributors"}]
-dependencies = ["numpy>=1.24", "scipy>=1.10", "mcp>=2,<3"]
+dependencies = ["numpy>=1.24", "scipy>=1.10", "mcp>=2,<3", "matplotlib>=3.7"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

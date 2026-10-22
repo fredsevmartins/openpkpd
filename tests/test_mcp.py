@@ -18,7 +18,9 @@ def test_stdio_server_discovers_four_tools():
             return {tool.name for tool in result.tools}
 
     names = asyncio.run(check())
-    assert names == {
+    assert {
         "simulate_pk", "calculate_nca", "simulate_pd",
         "simulate_multiple_doses",
-    }
+    }.issubset(names)
+    assert names == {"simulate_pk", "calculate_nca", "simulate_pd", "simulate_multiple_doses",
+                     "fit_pk_model", "compare_pk_models", "generate_pk_plots", "diagnose_pk_fit"}

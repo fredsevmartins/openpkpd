@@ -55,50 +55,72 @@ def concentration(time_h, dose_mg: float, clearance_L_h: float, volume_L: float,
     return f * dose_mg / v * shape
 
 
+def _parameters(clearance_L_h, volume_L, n_compartments, ka_per_h, route,
+                q_L_h, vp_L, q2_L_h, vp2_L, q3_L_h, vp3_L, lag_time_h):
+    from .models import integer
+    n = integer("n_compartments", n_compartments, maximum=3)
+    p = {"CL": clearance_L_h, "Vc": volume_L}
+    if n == 2:
+        p.update(Q=q_L_h, Vp=vp_L)
+    if n == 3:
+        p.update(Q2=q2_L_h, Vp2=vp2_L, Q3=q3_L_h, Vp3=vp3_L)
+    used = {2: [q_L_h, vp_L], 3: [q2_L_h, vp2_L, q3_L_h, vp3_L]}.get(n, [])
+    if any(x is None for x in used):
+        raise ValueError("all intercompartmental clearances and peripheral volumes are required")
+    if (n != 2 and any(x is not None for x in [q_L_h, vp_L])) or (n != 3 and any(x is not None for x in [q2_L_h, vp2_L, q3_L_h, vp3_L])):
+        raise ValueError("peripheral parameters do not match n_compartments")
+    if route == "oral":
+        if ka_per_h is None:
+            raise ValueError("ka_per_h is required for oral administration")
+        p.update(ka=ka_per_h, lag_time_h=lag_time_h)
+    elif ka_per_h is not None or lag_time_h != 0:
+        raise ValueError("absorption parameters apply only to oral administration")
+    return p
+
+
 def simulate_pk(dose_mg: float, clearance_L_h: float, volume_L: float,
                 bioavailability: float = 1.0, ka_per_h: float | None = None,
-                duration_h: float = 24.0, n_points: int = 201,
-                route: str = "iv") -> dict:
-    """Simulate a single-dose concentration-time profile and analytical summaries."""
+                duration_h: float = 24.0, n_points: int = 201, route: str = "iv", *,
+                n_compartments: int = 1, infusion_duration_h: float | None = None,
+                lag_time_h: float = 0.0, q_L_h: float | None = None, vp_L: float | None = None,
+                q2_L_h: float | None = None, vp2_L: float | None = None,
+                q3_L_h: float | None = None, vp3_L: float | None = None) -> dict:
+    """Simulate one, two or three compartments; legacy positional arguments retained."""
+    from .models import simulate_compartments
     t = _grid(duration_h, n_points)
-    c = concentration(t, dose_mg, clearance_L_h, volume_L, bioavailability, ka_per_h, route)
-    auc = float(bioavailability * dose_mg / clearance_L_h)
-    if route == "iv":
-        cmax, tmax = float(c[0]), 0.0
-    else:
-        ke = float(clearance_L_h) / float(volume_L)
-        ka = float(ka_per_h)
-        tmax = math.log(ka / ke) / (ka - ke) if not math.isclose(ka, ke, rel_tol=1e-7) else 1.0 / ke
-        cmax = float(concentration(tmax, dose_mg, clearance_L_h, volume_L, bioavailability, ka_per_h, route))
-    return {
-        "time_h": t.tolist(), "concentration_mg_L": c.tolist(),
-        "aucinf_mg_h_L": auc, "cmax_mg_L": cmax, "tmax_h": tmax,
-        "route": route, "units": {"dose": "mg", "time": "h", "concentration": "mg/L", "clearance": "L/h", "volume": "L", "auc": "mg*h/L"},
-        "assumptions": ASSUMPTIONS,
-    }
+    p = _parameters(clearance_L_h, volume_L, n_compartments, ka_per_h, route,
+                    q_L_h, vp_L, q2_L_h, vp2_L, q3_L_h, vp3_L, lag_time_h)
+    result = simulate_compartments(t, dose_mg, p, n_compartments=n_compartments,
+                                  route=route, bioavailability=bioavailability,
+                                  infusion_duration_h=infusion_duration_h)
+    if n_compartments == 1 and route in {"iv", "oral"}:
+        ke = float(clearance_L_h)/float(volume_L)
+        if route == "iv":
+            tmax = 0.0
+        else:
+            ka = float(ka_per_h)
+            tmax = lag_time_h + (math.log(ka/ke)/(ka-ke) if not math.isclose(ka, ke, rel_tol=1e-7) else 1/ke)
+        result.update(tmax_h=tmax, cmax_mg_L=float(concentration(tmax-lag_time_h, dose_mg, clearance_L_h, volume_L, bioavailability, ka_per_h, route)), peak_source="analytical single-dose peak")
+    return result
 
 
 def simulate_multiple_doses(dose_mg: float, clearance_L_h: float, volume_L: float,
                             dose_interval_h: float, n_doses: int,
                             bioavailability: float = 1.0, ka_per_h: float | None = None,
-                            points_per_interval: int = 101, route: str = "iv") -> dict:
-    """Simulate repeated equal doses using linear superposition."""
-    dose_mg = _positive("dose_mg", dose_mg)
+                            points_per_interval: int = 101, route: str = "iv", *,
+                            n_compartments: int = 1, infusion_duration_h: float | None = None,
+                            lag_time_h: float = 0.0, q_L_h: float | None = None, vp_L: float | None = None,
+                            q2_L_h: float | None = None, vp2_L: float | None = None,
+                            q3_L_h: float | None = None, vp3_L: float | None = None) -> dict:
+    """Repeated equal doses. IV bolus samples at dose times are post-dose."""
+    from .models import simulate_compartments, integer
     interval = _positive("dose_interval_h", dose_interval_h)
-    if isinstance(n_doses, bool) or int(n_doses) != n_doses or n_doses < 1:
-        raise ValueError("n_doses must be an integer >= 1")
-    if isinstance(points_per_interval, bool) or int(points_per_interval) != points_per_interval or points_per_interval < 2:
-        raise ValueError("points_per_interval must be an integer >= 2")
-    total = (int(n_doses) - 1) * interval
-    t = np.linspace(0, total + interval, (int(n_doses) - 1) * (int(points_per_interval) - 1) + int(points_per_interval))
-    c = np.zeros_like(t)
-    for dose_time in np.arange(int(n_doses)) * interval:
-        elapsed = t - dose_time
-        mask = elapsed >= 0
-        c[mask] += concentration(elapsed[mask], dose_mg, clearance_L_h, volume_L,
-                                 bioavailability, ka_per_h, route)
-    return {"time_h": t.tolist(), "concentration_mg_L": c.tolist(),
-            "dose_times_h": (np.arange(int(n_doses)) * interval).tolist(),
-            "cmax_mg_L": float(np.max(c)), "route": route,
-            "units": {"dose": "mg", "time": "h", "concentration": "mg/L"},
-            "assumptions": ASSUMPTIONS + " Repeated doses have equal size and are combined by linear superposition."}
+    count = integer("n_doses", n_doses)
+    points = integer("points_per_interval", points_per_interval, minimum=2)
+    p = _parameters(clearance_L_h, volume_L, n_compartments, ka_per_h, route,
+                    q_L_h, vp_L, q2_L_h, vp2_L, q3_L_h, vp3_L, lag_time_h)
+    t = np.linspace(0, count*interval, count*(points-1)+1)
+    return simulate_compartments(t, dose_mg, p, n_compartments=n_compartments,
+                                 route=route, bioavailability=bioavailability,
+                                 infusion_duration_h=infusion_duration_h,
+                                 dose_times_h=(np.arange(count)*interval).tolist())
