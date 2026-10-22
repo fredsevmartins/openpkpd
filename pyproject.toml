@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openpkpd"
+version = "0.1.0"
+description = "Small deterministic pharmacokinetic and pharmacodynamic modeling toolkit with an MCP server"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "OpenPKPD contributors"}]
+dependencies = ["numpy>=1.24", "scipy>=1.10", "mcp>=2,<3"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+openpkpd-mcp = "openpkpd.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
