@@ -5,6 +5,7 @@ One-, two- and three-compartment mammillary models support IV bolus, finite IV
 infusion, oral first-order absorption with optional lag, and repeated equal doses.
 The toolkit includes NCA, bounded nonlinear estimation, model diagnostics,
 likelihood-based comparison, scientific plots and eight local stdio MCP tools.
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/749d1800-72e0-49c4-bf96-938c45a6d617" />
 
 ## Install and test
 
@@ -12,6 +13,7 @@ For the full English installation, Claude Desktop/MCP setup, input data formats,
 
 Python 3.11+ is required. NumPy, SciPy, Matplotlib and the official MCP Python SDK
 stable 2.x line are the runtime dependencies.
+
 
 ```sh
 python -m venv .venv
