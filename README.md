@@ -8,6 +8,8 @@ likelihood-based comparison, scientific plots and eight local stdio MCP tools.
 
 ## Install and test
 
+For the full English installation, Claude Desktop/MCP setup, input data formats, tool parameters and usage examples, see the [installation and user guide](docs/installation-usage.md).
+
 Python 3.11+ is required. NumPy, SciPy, Matplotlib and the official MCP Python SDK
 stable 2.x line are the runtime dependencies.
 
@@ -103,6 +105,8 @@ Covariance and 95% intervals are conditional local approximations and are withhe
 for unreliable fits. Convergence and lowest AIC do not establish scientific validity.
 
 ## Local MCP integration
+
+See the [installation and user guide](docs/installation-usage.md) for Claude Desktop setup, exact MCP inputs and troubleshooting.
 
 Start `openpkpd-mcp` after installation. A compatible local stdio MCP client launches
 this process and manages stdin/stdout. Example configuration, adjusting paths:
