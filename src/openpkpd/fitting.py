@@ -71,8 +71,9 @@ def fit_pk_model(time_h, concentration_mg_L, dose_mg: float, initial_parameters:
                  dose_times_h: list[float] | None = None, max_nfev: int = 2000) -> dict:
     """Fit concentrations, not log concentrations, by bounded SciPy least_squares.
 
-    uniform: iid Gaussian errors with unknown scale. relative: Gaussian errors with
-    fixed shape s_i=observed C_i (all must be positive), common unknown scale.
+    uniform: iid Gaussian errors with unknown scale. relative:
+    observed-data weights s_i=observed C_i (all positive), a descriptive WLS objective
+    only: no normalized statistical likelihood or information criteria are claimed.
     known_sigma: independent Gaussian errors with supplied absolute standard deviations.
     Oral F absent means CL/F, Vc/F, Q/F and Vp/F are fitted and labelled apparent.
     F is never estimated jointly with disposition. Optional initial lag is fitted;
@@ -150,6 +151,7 @@ def fit_pk_model(time_h, concentration_mg_L, dose_mg: float, initial_parameters:
     if dof<=0: warning.append('Overparameterized data: no positive residual degrees of freedom.')
     if active: warning.append('Parameters at bounds: '+', '.join(active)+'. Local normal inference withheld.')
     if route=='oral': warning.append('Oral absorption/disposition can have flip-flop or global ambiguity; local full rank does not establish unique identification.')
+    if weighting=='relative': warning.append('Observed-data relative weights define descriptive WLS, not a normalized likelihood; information criteria withheld and inference is conditional on frozen weights.')
     if apparent: warning.append('F was not supplied. CL, Vc and peripheral disposition parameters represent apparent values divided by F.')
     if n==3: warning.append('Three-compartment peripheral labels can be exchanged; label uniqueness is not identifiable.')
     reliable = bool(opt.success and dof>0 and rank==k and condition<=1e8 and not active)
@@ -166,13 +168,22 @@ def fit_pk_model(time_h, concentration_mg_L, dose_mg: float, initial_parameters:
         for i,name in enumerate(names):
             se[name] = float(np.sqrt(max(cov[i,i],0)))
             ci[name] = [float(opt.x[i]-critical*se[name]),float(opt.x[i]+critical*se[name])]
+    rse = {name: (100*se[name]/abs(float(opt.x[i])) if se[name] is not None and opt.x[i]!=0 else None)
+           for i,name in enumerate(names)}
+    weak = [name for name,value in rse.items() if value is not None and value>=100]
+    if weak:
+        warning.append('Large relative standard errors (>=100%) indicate poorly determined parameters: '+', '.join(weak)+'.')
+    if any(interval is not None and interval[0]<0 for interval in ci.values()):
+        warning.append('Local confidence intervals cross physical parameter limits; normal approximation is unreliable near those limits.')
     likelihood = None
     criteria = {'aic':None,'aicc':None,'bic':None}
     likelihood_k = k + int(weighting!='known_sigma')
     # Zero/noise-free residuals have an unbounded unknown-variance likelihood.
-    noise_floor = np.finfo(float).eps*max(float(np.sum((y/shape)**2)),1.)
+    noise_floor = np.finfo(float).eps*max(float(np.sum((y/shape)**2)),np.finfo(float).tiny)
     if weighting=='known_sigma':
         likelihood = -.5*sse-float(np.sum(np.log(shape)))-count/2*math.log(2*math.pi)
+    elif weighting=='relative':
+        pass
     elif sse>noise_floor:
         likelihood = -count/2*(math.log(2*math.pi)+1+math.log(sse/count))-float(np.sum(np.log(shape)))
     else:
@@ -182,14 +193,14 @@ def fit_pk_model(time_h, concentration_mg_L, dose_mg: float, initial_parameters:
         criteria = {'aic':aic,'aicc': aic+2*likelihood_k*(likelihood_k+1)/(count-likelihood_k-1) if count>likelihood_k+1 else None,
                     'bic':likelihood_k*math.log(count)-2*likelihood}
     else:
-        warning.append('Information criteria unavailable for nonconverged, rank-deficient or saturated fits.')
+        warning.append('Information criteria unavailable: require a normalized finite likelihood, convergence, full rank and n greater than the likelihood parameter count.')
     identity = {'time':t.tolist(),'observed':y.tolist(),'dose':dose,'route':route,'doses':doses.tolist(),
                 'duration':duration,'F':bioavailability,'weighting':weighting,'shape':shape.tolist()}
     fingerprint = hashlib.sha256(json.dumps(identity,sort_keys=True,allow_nan=False).encode()).hexdigest()
     result = {'parameters':{name:float(v) for name,v in zip(names,opt.x)},
               'parameter_interpretation':'apparent (CL/F, Vc/F, Q/F, Vp/F)' if apparent else 'absolute disposition with externally specified F' if route=='oral' else 'absolute disposition',
               'parameter_units':{name: 'h' if name=='lag_time_h' else '1/h' if name=='ka' else 'L' if name.startswith('V') else 'L/h' for name in names},
-              'standard_errors':se,'confidence_intervals_95':ci,'covariance':covariance,
+              'standard_errors':se,'relative_standard_errors_percent':rse,'confidence_intervals_95':ci,'covariance':covariance,
               'inference_method':'Local linearized conditional Gaussian approximation; not proof of global identifiability; intervals are not clipped to bounds.',
               'time_h':t.tolist(),'observed_mg_L':y.tolist(),'predicted_mg_L':predicted.tolist(),
               'residuals_mg_L':raw.tolist(),'weighted_residuals':wr.tolist(),'objective_weighted_sse':sse,
@@ -199,8 +210,8 @@ def fit_pk_model(time_h, concentration_mg_L, dose_mg: float, initial_parameters:
                              'nfev':int(opt.nfev),'optimality':float(opt.optimality),'parameters_at_bounds':active},
               'identifiability':{'jacobian_rank':rank,'scaled_condition_number':condition if math.isfinite(condition) else None,
                                  'local_inference_available':reliable,'warnings':warning},
-              'statistical_model':{'distribution':'independent Gaussian concentration errors', 'weighting':weighting,
-                                    'scale':'known absolute sigma' if weighting=='known_sigma' else 'unknown common scale, maximum-likelihood estimate',
+              'statistical_model':{'distribution':'descriptive observed-weight WLS; no normalized likelihood' if weighting=='relative' else 'independent Gaussian concentration errors', 'weighting':weighting,
+                                    'scale':'known absolute sigma' if weighting=='known_sigma' else 'descriptive frozen-weight residual scale' if weighting=='relative' else 'unknown common scale, maximum-likelihood estimate',
                                     'log_likelihood':likelihood,'likelihood_parameter_count':likelihood_k,
                                     'comparison_fingerprint':fingerprint}, **criteria}
     result['diagnostics'] = diagnose_pk_fit(result)
@@ -215,6 +226,8 @@ def compare_pk_models(fits: list[dict]) -> dict:
     """
     if len(fits)<2:
         raise ValueError('at least two fits are required')
+    if any(f['statistical_model']['weighting']=='relative' for f in fits):
+        raise ValueError('observed-data relative weighting has no normalized likelihood for information-criterion comparison')
     fingerprints = [f['statistical_model']['comparison_fingerprint'] for f in fits]
     if len(set(fingerprints))!=1:
         raise ValueError('comparison requires identical observations, dosing and statistical error model')

@@ -91,3 +91,14 @@ def test_public_extended_wrappers():
 def test_invalid_model_options(options):
     with pytest.raises(ValueError):
         simulate_compartments([0,1],100,{'CL':5,'Vc':50},**options)
+
+
+def test_overlapping_delayed_infusions_analytical_reference():
+    t=np.array([0.,1.,2.,3.,4.,5.,6.,10.])
+    r=simulate_compartments(t,100,{'CL':5,'Vc':50},route='infusion',infusion_duration_h=4,dose_times_h=[1,3])
+    expected=np.zeros(len(t))
+    for dt in [1,3]:
+        mask=t>=dt; x=t[mask]-dt
+        expected[mask]+=5*(-np.expm1(-.1*np.minimum(x,4)))*np.exp(-.1*np.maximum(x-4,0))
+    assert r['concentration_mg_L']==pytest.approx(expected)
+    assert r['delivered_bioavailable_mg']==pytest.approx([0,0,25,50,100,150,175,200])

@@ -80,3 +80,25 @@ def test_infusion_mrt_correction():
 def test_invalid_nca_options(kwargs):
     with pytest.raises(ValueError):
         calculate_nca([0, 1, 2, 3], [3, 2, 1, .5], **kwargs)
+
+
+def test_terminal_auto_manual_and_separate_aumc_limit():
+    t=np.arange(0.,21)
+    c=2*np.exp(-.2*t)
+    r=calculate_nca(t,c,route='iv',dose_mg=100,integration_method='linear_up_log_down',
+                    terminal_selection='manual',terminal_indices=[16,17,18,19,20])
+    assert r['terminal_diagnostics']['selected_indices']==[16,17,18,19,20]
+    assert r['auc_extrapolation_percent']==pytest.approx(100*np.exp(-4))
+    assert r['aumc_extrapolation_percent']==pytest.approx(500*np.exp(-4))
+    assert r['aumcinf_mg_h2_L']==pytest.approx(50)
+    # At t=10 AUC extrapolation is 13.5%, AUMC extrapolation is 40.6%.
+    shorter=calculate_nca(t[:11],c[:11],route='iv',dose_mg=100,integration_method='linear_up_log_down')
+    assert shorter['aucinf_mg_h_L']==pytest.approx(10)
+    assert shorter['aumcinf_mg_h2_L'] is None and shorter['vss_L'] is None
+    assert shorter['clearance_L_h']==pytest.approx(10)
+
+
+def test_log_integration_extreme_positive_dynamic_range():
+    r=calculate_nca([0,1],[1e200,1e-200],integration_method='linear_up_log_down')
+    assert math.isfinite(r['auclast_mg_h_L'])
+    assert r['auclast_mg_h_L']==pytest.approx(1e200/(400*math.log(10)))

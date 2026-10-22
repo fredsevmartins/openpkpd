@@ -11,7 +11,7 @@ def _integrate(t, c, method):
     for t0, t1, a, b in zip(t[:-1], t[1:], c[:-1], c[1:]):
         dt = t1 - t0
         if method == 'linear_up_log_down' and 0 < b < a:
-            z = math.log(b / a)
+            z = math.log(b) - math.log(a)
             area = a * dt * math.expm1(z) / z
             # Stable first moment of exp(z*u), u in [0,1].
             moment = (sum(z**n / (math.factorial(n) * (n + 2)) for n in range(12))
@@ -197,10 +197,10 @@ def calculate_nca(time_h, concentration_mg_L, terminal_points: int = 3, *,
             'accumulation_ratio': accumulation, 'fluctuation_index': fluctuation,
             'terminal_diagnostics': diag, 'warnings': warnings, 'integration_method': integration_method,
             'blq_rule': blq_rule, 'route': route,
-            'parameter_sources': {'observed': ['cmax_observed_mg_L', 'tmax_observed_h', 'clast_mg_L', 'tlast_h'],
+            'parameter_sources': {'observed': ['cmax_observed_mg_L', 'tmax_observed_h', 'clast_mg_L', 'tlast_h', 'ctrough_mg_L'],
                                   'integrated': ['auclast_mg_h_L', 'aumclast_mg_h2_L', 'auctau_mg_h_L'],
                                   'terminal_regression': ['lambda_z_per_h', 'terminal_half_life_h', 'aucinf_mg_h_L', 'aumcinf_mg_h2_L'],
-                                  'derived': ['mrt_h', 'clearance_L_h', 'apparent_clearance_L_h', 'vz_L', 'apparent_vz_L', 'vss_L']},
+                                  'derived': ['mrt_h', 'clearance_L_h', 'apparent_clearance_L_h', 'vz_L', 'apparent_vz_L', 'vss_L', 'cavg_mg_L', 'fluctuation_index', 'accumulation_ratio']},
             'units': {'time': 'h', 'concentration': 'mg/L', 'auc': 'mg*h/L', 'aumc': 'mg*h^2/L',
                       'lambda_z': '1/h', 'clearance': 'L/h', 'volume': 'L'},
             'assumptions': 'NCA of retained samples; no back-extrapolation to time zero. Oral clearance and volume are apparent (CL/F, Vz/F); oral MRT includes absorption. Interval metrics require declared steady state; Ctrough is measured predose at interval end.'}

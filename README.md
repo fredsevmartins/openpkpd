@@ -1,75 +1,150 @@
-# OpenPKPD
+# OpenPKPD 1.0
 
-OpenPKPD is a small Python toolkit for deterministic pharmacokinetic (PK) and pharmacodynamic (PD) calculations. It also exposes those calculations as four discoverable tools through the official MCP Python SDK over local stdio.
+Open-source deterministic pharmacokinetic and pharmacodynamic modeling in Python.
+One-, two- and three-compartment mammillary models support IV bolus, finite IV
+infusion, oral first-order absorption with optional lag, and repeated equal doses.
+The toolkit includes NCA, bounded nonlinear estimation, model diagnostics,
+likelihood-based comparison, scientific plots and eight local stdio MCP tools.
 
-## Capabilities
+## Install and test
 
-- One-compartment IV bolus and first-order oral absorption PK profiles, with analytical AUC∞ and profile Cmax/Tmax.
-- Noncompartmental observed Cmax/Tmax, linear-trapezoidal AUClast, and a qualified log-linear terminal fit. Diagnostics state whether terminal parameters were accepted and why; AUC∞ is withheld when extrapolation exceeds 20%.
-- Emax and sigmoid Emax concentration-effect calculations.
-- Repeated IV or oral doses by linear superposition.
-
-All outputs carry units and model assumptions. Inputs are never inferred or fitted by the server.
-
-## Installation
-
-Python 3.11 or newer is required. From a checkout:
+Python 3.11+ is required. NumPy, SciPy, Matplotlib and the official MCP Python SDK
+stable 2.x line are the runtime dependencies.
 
 ```sh
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -e '.[test]'
+python -m pip check
+pytest -q
+python examples/reproduce.py
+python examples/modeling.py
 ```
 
-Core units are dose in mg, clearance in L/h, volume in L, time in h, concentration in mg/L, rate constants in 1/h, and AUC in mg*h/L. Oral bioavailability must be in (0, 1].
+On machines with a read-only home directory, set writable graphics caches before
+starting Python or the MCP client:
 
-## MCP setup
+```sh
+export MPLCONFIGDIR=/tmp/openpkpd-matplotlib
+export XDG_CACHE_HOME=/tmp/openpkpd-cache
+```
 
-The package uses the official MCP Python SDK stable 2.x line. Start the local stdio server with `openpkpd-mcp` after installation. Example Claude Desktop configuration (use the absolute path to the checkout and adjust the operating system path syntax):
+## Simulate
+
+Legacy 1C calls remain supported:
+
+```python
+from openpkpd import simulate_pk, simulate_multiple_doses, simulate_pd
+
+iv = simulate_pk(100, 5, 50)  # mg, L/h, L; AUCinf=20 mg*h/L
+oral = simulate_pk(100, 5, 50, bioavailability=0.8, ka_per_h=1.2,
+                   route="oral", lag_time_h=0.5)
+infusion = simulate_pk(100, 5, 50, route="infusion", infusion_duration_h=2,
+                       n_compartments=2, q_L_h=10, vp_L=100)
+three = simulate_multiple_doses(100, 5, 50, 12, 6, n_compartments=3,
+                                q2_L_h=10, vp2_L=100, q3_L_h=3, vp3_L=60)
+pd = simulate_pd([0, 2, 10], emax=80, ec50=2)
+```
+
+For arbitrary sampling and dose times, `simulate_compartments(time_h, dose_mg,
+parameters, ...)` accepts CL,Vc (1C); CL,Vc,Q,Vp (2C); CL,Vc,Q2,Vp2,Q3,Vp3
+(3C). Oral adds ka and optional lag_time_h. Clearances are L/h, volumes L, ka 1/h,
+time h, dose mg and concentration mg/L. Returned amount trajectories expose mass
+balance, including depot, pending absorption, unavailable drug and elimination.
+F must equal 1 for IV routes. Bolus samples at administration times are post-dose.
+
+## Noncompartmental analysis
+
+```python
+from openpkpd import calculate_nca
+
+nca = calculate_nca(
+    [0, 1, 2, 4, 8, 16, 24, 48],
+    [2, 1.81, 1.64, 1.34, 0.899, 0.404, 0.181, 0.0165],
+    route="iv", dose_mg=100,
+    integration_method="linear_up_log_down", terminal_selection="auto",
+)
+```
+
+NCA reports observed Cmax/Tmax and Clast/Tlast; AUC and AUMC; terminal slope,
+half-life and extrapolation diagnostics; MRT, CL or CL/F, Vz or Vz/F and Vss where
+identifiable. Repeated-dose input supports measured AUCtau and declared steady-state
+Ctrough, Cavg, accumulation and fluctuation. BLQ policies are explicit: exclude,
+zero or half LLOQ, using supplied observation flags. Manual terminal indices refer
+to original rows. Unavailable parameters are `None`, with diagnostics.
+
+AUCinf and AUMCinf each require <=20% extrapolation and sampling from time zero.
+No missing C0 or interval endpoints are invented. An end-of-interval sample used as
+Ctrough must be predose. See [scientific methods](docs/scientific-methods.md) for
+all equations, selection rules, units, assumptions and withholding criteria.
+
+## Fit, compare and plot
+
+```python
+import numpy as np
+from openpkpd import fit_pk_model, compare_pk_models, diagnose_pk_fit, generate_pk_plots
+
+t = np.linspace(0, 24, 30)
+c = 2*np.exp(-0.1*t) + np.random.default_rng(7).normal(0, 0.01, t.size)
+fit1 = fit_pk_model(t, c, 100, {"CL": 4, "Vc": 40})
+fit2 = fit_pk_model(t, c, 100, {"CL": 4, "Vc": 40, "Q": 5, "Vp": 30},
+                    n_compartments=2)
+comparison = compare_pk_models([fit1, fit2])
+diagnostics = diagnose_pk_fit(fit1)
+plots = generate_pk_plots(fit1, comparison)  # portable base64 PNG payloads
+# Optional: output_directory="/tmp/openpkpd-plots" to also save PNG files.
+```
+
+Supply bounds as `{"CL": [0.1, 30]}`. Weighting supports uniform, known absolute
+per-observation sigma, and descriptive relative WLS. Only normalized Gaussian
+likelihoods receive AIC/AICc/BIC; observation-based relative weights do not.
+Oral fitting without externally known F estimates **apparent** CL/F and volumes/F.
+Covariance and 95% intervals are conditional local approximations and are withheld
+for unreliable fits. Convergence and lowest AIC do not establish scientific validity.
+
+## Local MCP integration
+
+Start `openpkpd-mcp` after installation. A compatible local stdio MCP client launches
+this process and manages stdin/stdout. Example configuration, adjusting paths:
 
 ```json
 {
   "mcpServers": {
     "openpkpd": {
       "command": "/absolute/path/to/openpkpd/.venv/bin/openpkpd-mcp",
-      "args": []
+      "args": [],
+      "env": {
+        "MPLCONFIGDIR": "/tmp/openpkpd-matplotlib",
+        "XDG_CACHE_HOME": "/tmp/openpkpd-cache"
+      }
     }
   }
 }
 ```
 
-For other MCP clients, configure a local stdio server with the command above. This project implements local stdio only. It does not provide a remote hosted integration, so native ChatGPT compatibility is not claimed.
+The tools are `calculate_nca`, `simulate_pk`, `fit_pk_model`, `compare_pk_models`,
+`simulate_multiple_doses`, `simulate_pd`, `generate_pk_plots` and `diagnose_pk_fit`.
+Numerical tools return structured results with units and assumptions. Plot output
+uses embedded PNG image blocks and structured metadata, without hosted image links.
+Existing numerical tool names and positional Python arguments are retained; discovery
+now lists eight tools. This is a local stdio interface; remote hosting and native
+hosted-assistant integration are not supplied.
 
-The four tool names are `simulate_pk`, `calculate_nca`, `simulate_pd`, and `simulate_multiple_doses`.
+## Validation and limitations
 
-Example prompts:
+Tests use independent analytical and differential-equation references, parameter
+recovery from synthetic observations, explicit likelihood/covariance calculations,
+invalid-input cases, real MCP subprocesses, and PNG decoding. All original scientific
+regressions remain; MCP discovery additionally checks the four new tools.
+[Scientific methods](docs/scientific-methods.md) describes exactly what is tested.
 
-- “Simulate an IV bolus profile for 100 mg, clearance 5 L/h, and volume 50 L for 24 hours.”
-- “Calculate observed NCA metrics from these time points and concentrations. Report terminal fit diagnostics.”
-- “Calculate sigmoid Emax effects at concentrations 0, 1, 2, and 10 mg/L with Emax 80, EC50 2 mg/L, and Hill coefficient 1.5.”
-- “Simulate six oral doses of 100 mg every 12 hours with bioavailability 0.8 and ka 1.2 per hour.”
+Models assume fixed, linear PK, central elimination and first-order absorption.
+General multicompartment peaks are sampled estimates. Sparse/noisy terminal phases,
+oral flip-flop, unknown F, exchanged peripheral labels and poor sampling can prevent
+identification. No censored-data fitting, population modeling, profile-likelihood
+intervals or clinical validation is provided. Positivity checks do not replace
+physiological review. This software is for research, education and development;
+it does not provide individualized clinical dosing recommendations.
 
-## Reproducible calculation
-
-With the package installed, run `python examples/reproduce.py`. For an IV bolus of 100 mg with clearance 5 L/h, analytical AUC∞ is `Dose/CL = 20 mg*h/L`, and initial concentration is `Dose/V`. For an oral dose of 100 mg, bioavailability 0.8, and clearance 5 L/h, AUC∞ is `F*Dose/CL = 16 mg*h/L`.
-
-## Assumptions and limitations
-
-The PK model assumes one compartment, linear and time-invariant disposition, and first-order elimination; oral doses use first-order absorption and a fixed bioavailability. Multiple-dose calculations assume equal doses and linear superposition. The PD model assumes instantaneous equilibrium with no effect-site delay, tolerance, or hysteresis. NCA uses observed data with linear trapezoids and a log-linear terminal regression over the final requested positive observations after observed Cmax. Its thresholds (at least three points, strictly declining concentrations, R² ≥ 0.90, and at most 20% AUC extrapolation) are transparent screening criteria, not universal regulatory rules. Sparse, noisy, or otherwise unsuitable data may prevent terminal estimates.
-
-The toolkit does not select or invent parameters, fit population models, account for uncertainty, or provide individualized clinical dosing recommendations. It is educational and computational software, not a substitute for scientific review or clinical judgment.
-
-## Tests
-
-```sh
-pytest
-```
-
-## Contributing
-
-Contributions should preserve deterministic calculations, explicit units and assumptions, input validation, and independent tests against analytical reference cases. Please include the scientific rationale and a reproducible example for changes to model behavior.
-
-## Scientific disclaimer
-
-OpenPKPD is provided for research, education, and software development. It has not been validated for clinical decision-making. Users are responsible for checking inputs, assumptions, and results for their intended use.
+Contributions should preserve deterministic calculations, explicit units and
+assumptions, input validation, and independent scientific reference tests.
